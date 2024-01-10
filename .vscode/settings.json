@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.vue": "html",
+        "user.h": "c",
+        "stat.h": "c"
+    }
+}
