@@ -42,3 +42,5 @@ void *memcpy(void *, const void *, uint);
 
 //lab need
 int trace(int);
+struct sysinfo;
+int sysinfo(struct sysinfo *);
