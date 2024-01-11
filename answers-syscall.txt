@@ -1,0 +1,3 @@
+usertrap()
+7
+SYS_exec

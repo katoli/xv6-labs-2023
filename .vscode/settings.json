@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "*.vue": "html",
+        "user.h": "c"
+    }
+}
