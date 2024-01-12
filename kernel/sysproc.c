@@ -75,7 +75,40 @@ sys_sleep(void)
 int
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  int i;
+
+  int check_len;
+  uint64 va;
+  uint64 dstva;
+  pagetable_t pagetable;
+  uint64 check_va;
+  uint32 mask;
+  pte_t *pte;
+
+  argaddr(0, &va);
+  argint(1, &check_len);
+  argaddr(2, &dstva);
+  pagetable = myproc()->pagetable;
+  mask = 0;
+  vmprint(pagetable, 0);
+  
+  for(i = 0; i < MAXSCAN && i < check_len; i++){
+    check_va = va + i*PGSIZE;
+    if ((pte = walk(pagetable, check_va, 0)) == 0)
+      return -1;
+    
+    if((*pte & PTE_U) == 0 || (*pte & PTE_V) == 0)
+      return -1;
+    
+    if(*pte & PTE_A){
+      mask |= 1 << i;
+      *pte &= ~PTE_A;
+    }
+  }
+
+  if(copyout(pagetable, dstva, (char *)&mask, sizeof(mask)) < 0)
+    return -1;
+
   return 0;
 }
 #endif
