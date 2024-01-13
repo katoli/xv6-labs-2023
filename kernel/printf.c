@@ -118,6 +118,7 @@ printf(char *fmt, ...)
 void
 panic(char *s)
 {
+  backtrace();
   pr.locking = 0;
   printf("panic: ");
   printf(s);
@@ -132,4 +133,24 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+void
+backtrace(void)
+{
+  uint64 fp;
+  uint64 top;
+  uint64 bottom;
+  uint64* retad;
+
+  fp = r_rp();
+  // 栈帧是从高到低的
+  top = PGROUNDUP(fp);
+  bottom = PGROUNDDOWN(fp);
+  printf("backtrace:\n");
+  while(top > fp && fp > bottom){
+    retad = (uint64 *)(fp-8);
+    printf("%p\n", *retad);
+    fp = *(uint64 *)(fp-16);
+  }
 }
