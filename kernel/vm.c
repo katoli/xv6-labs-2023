@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -314,9 +316,26 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
-  uint flags;
-  char *mem;
-
+  
+  for(i = 0; i < sz; i += PGSIZE){
+    if((pte = walk(old, i, 0)) == 0)
+      panic("uvmcopy: pte should exist");
+    if((*pte & PTE_V) == 0)
+      panic("uvmcopy: page not present");
+    pa = PTE2PA(*pte);
+    *pte = ((*pte) & (~PTE_W)) | PTE_COW;
+    if(mappages(new, i, PGSIZE, pa, PTE_FLAGS(*pte)) < 0){
+      goto err;
+    }
+    kincref((void *)pa);
+  }
+  return 0;
+  
+ err:
+  uvmunmap(new, 0, i/PGSIZE, 1);
+  return -1;
+/*
+ char *mem;
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
@@ -337,6 +356,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
  err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
+*/
 }
 
 // mark a PTE invalid for user access.
@@ -362,6 +382,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   pte_t *pte;
 
   while(len > 0){
+    if(uvmcheckcow(dstva))
+      uvmcow(dstva);
     va0 = PGROUNDDOWN(dstva);
     if(va0 >= MAXVA)
       return -1;
@@ -369,6 +391,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
        (*pte & PTE_W) == 0)
       return -1;
+    
     pa0 = PTE2PA(*pte);
     n = PGSIZE - (dstva - va0);
     if(n > len)
@@ -447,5 +470,72 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+int
+uvmcheckcow(uint64 va)
+{
+  pte_t *pte;
+  struct proc *p = myproc();
+  
+  // printf("va: %p\n", va);
+  // printflag(pte);
+  // printf("%p\n\n", ;
+
+  return  va < p->sz                              // va out of sz?
+      &&  va                                      // va cant be 0x0
+      && ((pte = walk(p->pagetable, va, 0)) != 0) // can fetch page?
+      && ((*pte)&PTE_V)                           // page have entry?
+      && ((*pte)&PTE_COW);                        // page is COW?
+}
+
+
+int
+uvmcow(uint64 va)
+{
+  int flags;
+  uint64 pa;
+  uint64 npa;
+  pte_t *pte;
+  struct proc *p;
+
+  p = myproc();
+  if((pte = walk(p->pagetable, va, 0)) == 0)
+    return -1;
+
+  pa = PTE2PA(*pte);
+  npa = (uint64)knpage((void *)pa);
+
+  if(npa == 0)
+    return -1;
+  
+  flags = (PTE_FLAGS(*pte) | PTE_W) & (~PTE_COW);
+  uvmunmap(p->pagetable, PGROUNDDOWN(va), 1, 0);
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, npa, flags) < 0){
+    kfree((void *)pa);
+    return -1;
+  }
+
+  return 0;
+}
+
+void
+backtrace(void)
+{
+  uint64 fp;
+  uint64 top;
+  uint64 bottom;
+  uint64* retad;
+
+  fp = r_rp();
+  // 栈帧是从高到低的
+  top = PGROUNDUP(fp);
+  bottom = PGROUNDDOWN(fp);
+  printf("backtrace:\n");
+  while(top > fp && fp > bottom){
+    retad = (uint64 *)(fp-8);
+    printf("%p\n", *retad);
+    fp = *(uint64 *)(fp-16);
   }
 }

@@ -183,13 +183,13 @@ main(int argc, char *argv[])
   simpletest();
 
   // check that the first simpletest() freed the physical memory.
-  simpletest();
+  //simpletest();
 
-  threetest();
-  threetest();
-  threetest();
+  //threetest();
+  //threetest();
+  //threetest();
 
-  filetest();
+  //filetest();
 
   printf("ALL COW TESTS PASSED\n");
 

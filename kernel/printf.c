@@ -118,6 +118,7 @@ printf(char *fmt, ...)
 void
 panic(char *s)
 {
+  backtrace();
   pr.locking = 0;
   printf("panic: ");
   printf(s);
@@ -132,4 +133,13 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+void
+printflag(void *pte)
+{
+  printf("VRWXUGADC\n");
+  for(int i = 0; i <= 8; ++i)
+    printf("%d", (*(uint64 *)pte)>>i&1);
+  printf("\n");
 }

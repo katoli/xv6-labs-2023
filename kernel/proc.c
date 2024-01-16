@@ -406,6 +406,7 @@ wait(uint64 addr)
 
         havekids = 1;
         if(pp->state == ZOMBIE){
+          // printf("zombi\n");
           // Found one.
           pid = pp->pid;
           if(addr != 0 && copyout(p->pagetable, addr, (char *)&pp->xstate,
