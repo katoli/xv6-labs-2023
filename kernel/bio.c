@@ -23,13 +23,13 @@
 #include "fs.h"
 #include "buf.h"
 
-#define BCSIZE 7
+#define BCSIZE 13
 
-#define HASHKEY(dev, blockno) (((dev << 17) | blockno) % BCSIZE)
+#define HASHKEY(dev, blockno) (((dev << 27) | blockno) % BCSIZE)
 
 struct {
   // for test
-  struct spinlock lock;
+  // struct spinlock lock;
   
   struct buf buf[NBUF];
   
@@ -44,15 +44,17 @@ b_insert(uint key, struct buf *b)
 {
   b->next = bcache.bucket[key].next;
   bcache.bucket[key].next = b;
-  printf("key: %d b: %p\n", key, bcache.bucket[key].next);
+  // printf("key: %d b: %p\n", key, bcache.bucket[key].next);
 }
 
 // must hold the bklock[key] before call
 static inline struct buf *
 b_search(uint key, uint dev, uint blockno)
 {
+  // if(key == 1) printf("key: %d\n", key);
   struct buf *b;
-  for(b = bcache.bucket[key].next; b; b++){
+  for(b = bcache.bucket[key].next; b; b=b->next){
+    // if(key == 1)printf("dev: %d blockno: %d evien: %d refcnt: %d\n", b->dev, b->blockno, b->evien, b->refcnt);
     if(b->dev == dev && b->blockno == blockno && !b->evien){
       return b;
     }
@@ -64,10 +66,9 @@ binit(void)
 {
   struct buf *b;
 
-  initlock(&bcache.lock, "bcache");
+  // initlock(&bcache.lock, "bcache");
   for(int i = 0; i < BCSIZE; i++){
-    char *id = "bcache.bucket_x";
-    id[15] = i + '0';
+    char *id = "bcache.bucket";
     initlock(&bcache.bklock[i], id);
     bcache.bucket[i].next = 0;
   }
@@ -93,15 +94,19 @@ bget(uint dev, uint blockno)
   struct buf *b;
 
   // 是否命中cache
-  uint key = HASHKEY(dev, blockno);printf("ready\n");
+  uint key = HASHKEY(dev, blockno);
   acquire(&bcache.bklock[key]);
-  
+
+  // printf("\nbget: key: %d dev: %d blockno: %d\n", key, dev, blockno);
+  b_search(1, 0, 0);
+
   if((b=b_search(key, dev, blockno))){
     b->refcnt++;
     release(&bcache.bklock[key]);
     acquiresleep(&b->lock);
     return b;
   }
+  
   
   release(&bcache.bklock[key]);
   // 第一次获取失败，我们需要进行一次evict的操作,先将key的锁释放
@@ -116,8 +121,7 @@ bget(uint dev, uint blockno)
     int tt = -1;
     acquire(&bcache.bklock[i]);
     for(b=&bcache.bucket[i]; b->next; b=b->next){
-      printf("%d\n",i);
-      if((b->evien || b->refcnt == 0) &&
+      if((b->next->evien || b->next->refcnt == 0) &&
           (tt == -1 || (tt > b->next->lastuse))){
         bb = b;
         tt = b->next->lastuse;
@@ -169,11 +173,16 @@ bget(uint dev, uint blockno)
   }
 
   // 如果还是没有命中的话，这个新的页面就拿过来用
+  // 这个页面不是key的才需要insert
+  if(evict_key != key)
+    b_insert(key, newbuf);
+  // printf("newbuf: dev: %d blockno: %d recnt: %d\n", newbuf->dev, newbuf->blockno, newbuf->refcnt);
+  newbuf->evien = 0;
   newbuf->dev = dev;
   newbuf->blockno = blockno;
   newbuf->valid = 0;
   newbuf->refcnt = 1;
-  b_insert(key, newbuf);
+  
   release(&bcache.bklock[key]);
   acquiresleep(&newbuf->lock);
   return newbuf;
@@ -211,13 +220,11 @@ bread(uint dev, uint blockno)
 {
   struct buf *b;
 
-  acquire(&bcache.lock);
   b = bget(dev, blockno);
   if(!b->valid) {
     virtio_disk_rw(b, 0);
     b->valid = 1;
   }
-  release(&bcache.lock);
   return b;
 }
 
@@ -241,12 +248,13 @@ brelse(struct buf *b)
   releasesleep(&b->lock);
   uint key = HASHKEY(b->dev, b->blockno);
   acquire(&bcache.bklock[key]);
+  
   b->refcnt--;
   if (b->refcnt == 0) {
     // no one is waiting for it.
     b->lastuse = ticks;
   }
-  
+  // printf("\nbrelse: key: %d dev: %d blockno: %d refcnt: %d\n", key, b->dev, b->blockno, b->refcnt);
   release(&bcache.bklock[key]);
 }
 

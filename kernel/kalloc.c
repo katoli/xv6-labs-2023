@@ -90,7 +90,7 @@ kalloc(void)
   if(!kmem[id].freelist){
     // one by one to steal is too slow
     // because of the lock fetch
-    int steal_count = 256;
+    int steal_count = 128;
     for(int i = 0; i < NCPU; i++){
       if(i == id)
         continue;
