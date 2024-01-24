@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -501,5 +502,174 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr, sz, offset;
+  int prot, flags, fd;
+  struct file *f;
+  struct proc *p;
+
+  argaddr(0, &addr);
+  argaddr(1, &sz);
+  argint(2, &prot);
+  argint(3, &flags);
+  argaddr(5, &offset);
+  if(sz <= 0 || argfd(4, &fd, &f) < 0)
+    return -1;
+  
+  // 检查文件的权限和mmap的权限是否冲突，以及mmap的MAP模式
+  if((!f->readable && (prot & PROT_READ))
+      || (!f->writable && (prot & PROT_WRITE) && !(flags & MAP_PRIVATE)))
+    return -1;
+
+
+  struct vma *v = 0;
+  // 大小的分配必须是页面大小的整数倍
+  sz = PGROUNDUP(sz);
+  uint64 vastart = TRAPFRAME - sz;
+  p = myproc();
+  for(int i = 0; i < NVMA; i++){
+    struct vma *vv = &p->vmas[i];
+    if(vv->valid){
+      if(vastart < vv->vastart + sz){
+        vastart = PGROUNDDOWN(vv->vastart) - sz;
+      } 
+    }else {
+      v = vv;
+    }
+  }
+
+  if(v == 0)
+    panic("mmap: no free vma");
+
+  // printf("find va: %p ~ %p\n", vastart, vastart + sz);
+
+  v->f = f;
+  v->flags = flags;
+  v->offset = offset;
+  v->prot = prot;
+  v->sz = sz;
+  v->valid = 1;
+  v->vastart = vastart;
+
+  filedup(v->f);
+  return vastart;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 va, sz;
+  struct proc *p;
+  struct vma *v;
+  
+  argaddr(0, &va);
+  argaddr(1, &sz);
+  if(sz <= 0)
+    return -1;
+
+  // printf("munmap: %p with sz %p\n", va, sz);
+  p = myproc();
+  v = 0;
+  for(int i = 0; i < NVMA; i++){
+    struct vma *vv = &p->vmas[i];
+    if(vv->valid == 1 && va >= vv->vastart && va < vv->vastart + vv->sz){
+      v = vv;
+      break;
+    }
+  }
+
+  if(v == 0)
+    return -1;
+
+  // printf("find va: %p ~ %p\n", v->vastart, v->vastart + v->sz);
+  // 是否在内存中挖了个"洞"
+  if(va > v->vastart && va + sz < v->vastart + v->sz)
+    return -1;
+  
+  // 保证了不会挖洞 不用考虑这种情况 但是需要向上对齐
+  uint64 aligned_va = va;
+  if(va != v->vastart)
+    aligned_va = PGROUNDUP(va);
+  int nunmap = sz - (aligned_va - va);
+  if(nunmap < 0)
+    nunmap = 0;
+
+  // printf("nunmap: %p\n", nunmap);
+  // uvmunmap can write page if MAP_SHARED
+  vmunmap(aligned_va, nunmap, p->pagetable, v);
+
+  if(va == v->vastart){
+    v->offset += va + sz - v->vastart;
+    v->vastart = va + sz;
+  }
+  v->sz -= sz;
+  // printf("after sz: %p\n", v->sz);
+
+  if(v->sz <= 0){
+    fileclose(v->f);
+    v->valid = 0;
+  }
+
+  return 0;
+}
+
+uint64
+handler(uint64 va)
+{
+  // printf("search for: %p\n", va);
+  struct proc *p;
+  struct vma *v;
+
+  p = myproc();
+  v = 0;
+  for(int i = 0; i < NVMA; i++){
+    struct vma *vv = &p->vmas[i];
+    if(vv->valid == 1 && va >= vv->vastart && va < vv->vastart + vv->sz){
+      v = vv;
+      break;
+    }
+  }
+
+  // printf("vma: %p\n",v);
+
+  if(v == 0)
+    return -1;
+
+  // printf("find va: %p ~ %p\n", v->vastart, v->vastart + v->sz);
+  // 分配物理地址
+  void *pa = kalloc();
+  if(pa == 0){
+    return -1;
+  }
+  memset(pa, 0, PGSIZE);
+
+  // 写盘
+  begin_op();
+  ilock(v->f->ip);
+  readi(v->f->ip, 0, (uint64)pa, PGROUNDDOWN(va - v->vastart) + v->offset, PGSIZE);
+  iunlock(v->f->ip);
+  end_op();
+
+  // 设置页面权限
+  int perm = PTE_U;
+  if(v->prot & PROT_READ)
+    perm |= PTE_R;
+  if(v->prot & PROT_WRITE)
+    perm |= PTE_W;
+  if(v->prot & PROT_EXEC)
+    perm |= PTE_X;
+
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)pa, perm) < 0){
+    kfree(pa);
+    return -1;
+  }
+
+  // printf("handler done\n");
+
   return 0;
 }

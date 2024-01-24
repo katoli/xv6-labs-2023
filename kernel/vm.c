@@ -5,6 +5,12 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "fcntl.h"
+#include "spinlock.h"
+#include "sleeplock.h"
+#include "proc.h"
+#include "file.h"
+
 
 /*
  * the kernel's page table.
@@ -447,5 +453,31 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+void
+vmunmap(uint64 va, int nbytes, pagetable_t p, struct vma *v)
+{
+  uint64 a;
+  pte_t *pte;
+
+  for(a = va; a < va + nbytes; a += PGSIZE){
+    if((pte = walk(p, a, 0)) == 0)
+      panic("sys_munmap: walk");
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("sys_munmap: not a leaf");
+    if(*pte & PTE_V){
+      uint64 pa = PTE2PA(*pte);
+      if(v->flags & MAP_SHARED) {
+        begin_op();
+        ilock(v->f->ip);
+        writei(v->f->ip, 0, pa, a - v->vastart + v->offset, PGSIZE);
+        iunlock(v->f->ip);
+        end_op();
+      }
+      kfree((void*)pa);
+      *pte = 0;
+    }
   }
 }

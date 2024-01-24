@@ -125,6 +125,11 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
+  // 初始化vma
+  for(int i = 0; i < NVMA; i++){
+    p->vmas->valid = 0;
+  }
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -158,8 +163,14 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  // printf("pproc: %d\n", p->pid);
+  for(int i = 0; i < NVMA; i++){
+    struct vma *v = &p->vmas[i];
+    vmunmap(v->vastart, v->sz, p->pagetable, v);
+  }
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -308,6 +319,14 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  for(i = 0; i < NVMA; i++){
+    struct vma *v = &p->vmas[i];
+    if(v->valid){
+      np->vmas[i] = *v;
+      filedup(v->f);
+    }
+  }
+
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -351,6 +370,10 @@ exit(int status)
   if(p == initproc)
     panic("init exiting");
 
+  for(int i = 0; i < NVMA; i++){
+    struct vma *v = &p->vmas[i];
+    vmunmap(v->vastart, v->sz, p->pagetable, v);
+  }
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
     if(p->ofile[fd]){
@@ -359,7 +382,7 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
-
+  
   begin_op();
   iput(p->cwd);
   end_op();
@@ -369,6 +392,8 @@ exit(int status)
 
   // Give any children to init.
   reparent(p);
+
+  // printf("proc: %d\n", p->pid);
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);

@@ -288,6 +288,7 @@ fork_test(void)
     exit(0); // tell the parent that the mapping looks OK.
   }
 
+  
   int status = -1;
   wait(&status);
 
@@ -295,10 +296,10 @@ fork_test(void)
     printf("fork_test failed\n");
     exit(1);
   }
-
+  
   // check that the parent's mappings are still there.
   _v1(p1);
   _v1(p2);
-
+  
   printf("fork_test OK\n");
 }
